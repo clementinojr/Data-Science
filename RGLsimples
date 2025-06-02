@@ -1,0 +1,54 @@
+from pyspark.sql import SparkSession
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import StringIndexer, VectorAssembler, StandardScaler
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+
+# 1. Inicializar a SparkSession
+spark = SparkSession.builder.appName("LogisticRegressionPipeline").getOrCreate()
+
+# 2. Carregar os dados
+# Substitua 'caminho/para/seu/arquivo.csv' pelo caminho real do seu arquivo de dados
+data = spark.read.csv("caminho/para/seu/arquivo.csv", header=True, inferSchema=True)
+
+# 3. Pré-processamento dos dados
+
+# 3.1. Identificar colunas categóricas e numéricas
+categorical_cols = [col for col, dtype in data.dtypes if dtype == "string"]
+numerical_cols = [col for col, dtype in data.dtypes if dtype != "string" and col != "label"]
+label_col = "label"  # Substitua 'label' pelo nome da sua coluna de rótulo
+
+# 3.2. Indexação de colunas categóricas
+indexers = [StringIndexer(inputCol=col, outputCol=col + "_index") for col in categorical_cols]
+
+# 3.3. Montagem das features numéricas e indexadas em um vetor
+assembler_inputs = [col + "_index" for col in categorical_cols] + numerical_cols
+assembler = VectorAssembler(inputCols=assembler_inputs, outputCol="raw_features")
+
+# 3.4. Normalização/Padronização das features
+scaler = StandardScaler(inputCol="raw_features", outputCol="features")
+
+# 4. Treinamento do modelo de Regressão Logística
+
+# 4.1. Criar o objeto do modelo
+lr = LogisticRegression(labelCol=label_col, featuresCol="features")
+
+# 5. Montar o Pipeline
+pipeline = Pipeline(stages=indexers + [assembler, scaler, lr])
+
+# 6. Dividir os dados em treino e teste
+train_data, test_data = data.randomSplit([0.8, 0.2], seed=42)
+
+# 7. Treinar o modelo usando o Pipeline
+model = pipeline.fit(train_data)
+
+# 8. Fazer previsões no conjunto de teste
+predictions = model.transform(test_data)
+
+# 9. Avaliar o modelo
+evaluator = BinaryClassificationEvaluator(labelCol=label_col)
+auc = evaluator.evaluate(predictions)
+print(f"AUC (Area Under ROC Curve) no conjunto de teste: {auc}")
+
+# 10. Parar a SparkSession
+spark.stop()
