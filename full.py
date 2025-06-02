@@ -230,6 +230,14 @@ for i, fold_info in enumerate(folds):
     print(f"  Recall (Ponderado) no Fold {i+1}: {recall:.4f}")
     print(f"  F1-Score (Ponderado) no Fold {i+1}: {f1_score:.4f}")
 
+        # Calcular e exibir a Matriz de Confusão para o fold atual
+    print("\n  Matriz de Confusão (Fold {}):".format(i+1))
+    confusion_matrix_df = predictions.groupBy(label_col).pivot("prediction").count().fillna(0)
+    confusion_matrix_df.show()
+    # Para uma matriz de confusão mais legível, você pode converter para Pandas:
+    # pandas_cm = confusion_matrix_df.toPandas()
+    # print(pandas_cm)
+
     results.append({
         'fold': i+1,
         'auc': auc,
