@@ -449,4 +449,40 @@ else:
 
 # COMMAND ----------
 
+# Aplicar o modelo final (pipeline) a todo o conjunto de dados
+# O 'final_model_for_importance' é o pipeline completo treinado no último fold.
+predictions_all_data = final_model_for_importance.transform(data)
+
+# Selecionar as colunas de ID (se houver), período, rótulo original e a probabilidade
+# A coluna 'probability' é um vetor denso que contém as probabilidades para cada classe.
+# Para classificação binária, geralmente você quer a probabilidade da classe positiva (índice 1).
+# A coluna 'prediction' contém a classe prevista (0 ou 1).
+probability_results = predictions_all_data.select("id", period_column, label_col, "prediction", "probability")
+
+print("Probabilidades do Modelo Final para todos os registros (amostra):")
+probability_results.show(10, truncate=False)
+
+# Se você quiser extrair apenas a probabilidade da classe positiva (1)
+# A coluna 'probability' é um VectorUDT, e o elemento em index 1 é a probabilidade da classe positiva.
+from pyspark.sql.functions import udf
+from pyspark.sql.types import DoubleType
+from pyspark.ml.linalg import VectorUDT
+
+# UDF para extrair a probabilidade da classe positiva (índice 1)
+# Certifique-se de que a coluna 'probability' realmente existe e é um vetor.
+try:
+    get_prob_positive_udf = udf(lambda v: float(v[1]), DoubleType())
+    probability_results_positive_class = predictions_all_data.select(
+        "id",
+        period_column,
+        label_col,
+        "prediction",
+        get_prob_positive_udf(col("probability")).alias("probability_positive_class")
+    )
+    print("\nProbabilidade da Classe Positiva (1) para todos os registros (amostra):")
+    probability_results_positive_class.show(10, truncate=False)
+except Exception as e:
+    print(f"\nErro ao extrair a probabilidade da classe positiva: {e}")
+    print("Verifique se a coluna 'probability' é um vetor e se a classe positiva está no índice 1.")
+
 spark.stop()
