@@ -1,0 +1,292 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # Pipeline de Regressão Logística com Teste de Importância de Variáveis (PySpark)
+# MAGIC
+# MAGIC Este notebook demonstra um pipeline completo para uma aplicação de regressão logística usando PySpark, abrangendo as etapas de pré-processamento, treinamento, avaliação do modelo e, adicionalmente, métodos para testar a importância das variáveis.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 1. Inicializar a SparkSession
+
+# COMMAND ----------
+
+from pyspark.sql import SparkSession
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import StringIndexer, VectorAssembler, StandardScaler
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+
+# Inicializar a SparkSession
+spark = SparkSession.builder.appName("LogisticRegressionWithFeatureImportance").getOrCreate()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 2. Carregar os Dados
+
+# COMMAND ----------
+
+# Substitua 'caminho/para/seu/arquivo.csv' pelo caminho real do seu arquivo de dados
+data_path = "caminho/para/seu/arquivo.csv"
+try:
+    data = spark.read.csv(data_path, header=True, inferSchema=True)
+    print(f"Dados carregados com sucesso de: {data_path}")
+    data.printSchema()
+    data.show(5)
+except Exception as e:
+    print(f"Erro ao carregar os dados de: {data_path}")
+    print(e)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 3. Pré-processamento dos Dados
+
+# COMMAND ----------
+
+# 3.1. Identificar colunas categóricas e numéricas
+categorical_cols = [col for col, dtype in data.dtypes if dtype == "string"]
+numerical_cols = [col for col, dtype in data.dtypes if dtype != "string" and col != "label"]
+label_col = "label"  # Substitua 'label' pelo nome da sua coluna de rótulo
+
+print(f"Colunas categóricas: {categorical_cols}")
+print(f"Colunas numéricas: {numerical_cols}")
+print(f"Coluna de rótulo: {label_col}")
+
+# 3.2. Indexação de colunas categóricas
+indexers = [StringIndexer(inputCol=col, outputCol=col + "_index", handleInvalid="keep") for col in categorical_cols]
+
+# 3.3. Montagem das features numéricas e indexadas em um vetor
+assembler_inputs = [col + "_index" for col in categorical_cols] + numerical_cols
+assembler = VectorAssembler(inputCols=assembler_inputs, outputCol="raw_features", handleInvalid="skip")
+
+# 3.4. Normalização/Padronização das features
+scaler = StandardScaler(inputCol="raw_features", outputCol="features", withStd=True, withMean=True)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 4. Treinamento do Modelo de Regressão Logística
+
+# COMMAND ----------
+
+# Criar o objeto do modelo
+lr = LogisticRegression(labelCol=label_col, featuresCol="features")
+
+# Montar o Pipeline
+pipeline = Pipeline(stages=indexers + [assembler, scaler, lr])
+
+# Dividir os dados em treino e teste
+train_data, test_data = data.randomSplit([0.8, 0.2], seed=42)
+
+# Treinar o modelo usando o Pipeline
+model = pipeline.fit(train_data)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 5. Avaliação do Modelo
+
+# COMMAND ----------
+
+# Fazer previsões no conjunto de teste
+predictions = model.transform(test_data)
+
+# Avaliar o modelo
+evaluator = BinaryClassificationEvaluator(labelCol=label_col)
+auc = evaluator.evaluate(predictions)
+print(f"AUC (Area Under ROC Curve) no conjunto de teste: {auc}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 6. Testando a Importância de Variáveis
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 6.1. Coeficientes da Regressão Logística
+
+# COMMAND ----------
+
+# Obter o modelo de regressão logística treinado do pipeline
+trained_lr_model = model.stages[-1]
+
+# Obter os coeficientes
+coefficients = trained_lr_model.coefficients
+
+# Obter os nomes das features (após o VectorAssembler)
+feature_names = assembler.getInputCols()
+
+# Criar uma lista de tuplas com nome da feature e coeficiente
+feature_importance_lr = zip(feature_names, coefficients.toArray().tolist())
+
+# Ordenar por magnitude do coeficiente (valor absoluto)
+sorted_importance_lr = sorted(feature_importance_lr, key=lambda x: abs(x[1]), reverse=True)
+
+print("Importância das Variáveis (Regressão Logística - Coeficientes):")
+for feature, importance in sorted_importance_lr:
+    print(f"- {feature}: {importance:.4f}")
+
+# **Observações:**
+# - A magnitude do coeficiente indica a força da relação.
+# - O sinal indica a direção da relação (positiva ou negativa com a probabilidade da classe positiva).
+# - Variáveis categóricas são representadas por seus índices (ex: `nome_da_coluna_index`).
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 6.2. Importância de Features em Modelos Baseados em Árvores (Opcional - se você treinasse um modelo como RandomForest)
+
+# COMMAND ----------
+
+# # Exemplo com RandomForestClassifier (se você tivesse treinado um)
+# from pyspark.ml.classification import RandomForestClassifier
+#
+# # Criar modelo RandomForest
+# rf = RandomForestClassifier(labelCol=label_col, featuresCol="features", seed=42)
+# pipeline_rf = Pipeline(stages=indexers + [assembler, scaler, rf])
+# model_rf = pipeline_rf.fit(train_data)
+#
+# # Obter o modelo RandomForest treinado
+# trained_rf_model = model_rf.stages[-1]
+#
+# # Obter a importância das features
+# if hasattr(trained_rf_model, "featureImportances"):
+#     importances_rf = trained_rf_model.featureImportances
+#     feature_importance_rf = zip(feature_names, importances_rf.toArray().tolist())
+#     sorted_importance_rf = sorted(feature_importance_rf, key=lambda x: x[1], reverse=True)
+#
+#     print("\nImportância das Variáveis (Random Forest):")
+#     for feature, importance in sorted_importance_rf:
+#         print(f"- {feature}: {importance:.4f}")
+# else:
+#     print("\nO modelo Random Forest não possui o atributo 'featureImportances'.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 6.3. Importância por Permutação (Feature Permutation Importance) - Abordagem com Pandas e Scikit-learn (para ilustrar o conceito)
+# MAGIC
+# MAGIC **Observação:** A implementação direta de permutação em grande escala no PySpark pode ser computacionalmente intensiva. A abordagem abaixo usa Pandas e Scikit-learn em uma amostra dos dados para demonstrar o conceito. Para conjuntos de dados muito grandes, considere amostragem ou outras técnicas distribuídas.
+
+# COMMAND ----------
+
+import pandas as pd
+from sklearn.inspection import permutation_importance
+from sklearn.linear_model import LogisticRegression as SKLogisticRegression
+import numpy as np
+
+# Converter os dados de treino para Pandas DataFrame (amostrando para eficiência)
+pandas_train_df = train_data.sample(fraction=0.1, seed=42).toPandas()
+pandas_test_df = test_data.toPandas()
+
+# Separar features e rótulo
+X_train = pandas_train_df[assembler.getInputCols()]
+y_train = pandas_train_df[label_col]
+X_test = pandas_test_df[assembler.getInputCols()]
+y_test = pandas_test_df[label_col]
+
+# Treinar um modelo de regressão logística do scikit-learn (usando as mesmas features)
+# **Importante:** Precisamos garantir que a ordem das colunas em X_train corresponda à ordem esperada pelo modelo treinado no PySpark.
+# Como o StandardScaler do PySpark já foi aplicado, para uma comparação mais direta, idealmente aplicaríamos a mesma transformação aqui.
+# Para simplificar a demonstração do conceito de permutação, vamos treinar um novo modelo no conjunto de dados amostrado.
+
+# Nota: O pré-processamento (indexação, scaling) feito no PySpark não é diretamente transferível para o scikit-learn sem reimplementação.
+# Para uma análise de importância por permutação mais precisa, o ideal seria aplicar as mesmas transformações.
+
+# Para esta demonstração, vamos assumir que os dados amostrados são razoavelmente comparáveis após a montagem das features.
+# Em um cenário real, você precisaria aplicar as mesmas transformações do pipeline PySpark aos dados do scikit-learn.
+
+# Criar e treinar um modelo scikit-learn
+sk_lr = SKLogisticRegression(random_state=42)
+sk_lr.fit(X_train, y_train)
+
+# Realizar a importância por permutação
+perm_importance = permutation_importance(sk_lr, X_test, y_test, n_repeats=10, random_state=42)
+
+# Obter as importâncias e os nomes das features
+importances = perm_importance.importances_mean
+feature_names_perm = X_test.columns
+
+# Criar uma lista de tuplas com nome da feature e importância
+feature_importance_perm = zip(feature_names_perm, importances.tolist())
+
+# Ordenar por magnitude da importância
+sorted_importance_perm = sorted(feature_importance_perm, key=lambda x: x[1], reverse=True)
+
+print("\nImportância das Variáveis (Permutação):")
+for feature, importance in sorted_importance_perm:
+    print(f"- {feature}: {importance:.4f}")
+
+# **Interpretação:**
+# - Valores positivos de importância indicam que a feature contribuiu para o desempenho do modelo.
+# - Valores negativos ou próximos de zero sugerem que a feature pode não ser informativa ou pode até adicionar ruído.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 6.4. Correlação (para variáveis numéricas)
+
+# COMMAND ----------
+
+from pyspark.sql.functions import col
+
+print("\nCorrelação das Variáveis Numéricas com a Variável de Rótulo:")
+for num_col in numerical_cols:
+    try:
+        correlation = data.stat.corr(num_col, label_col)
+        print(f"- Correlação entre {num_col} e {label_col}: {correlation:.4f}")
+    except Exception as e:
+        print(f"- Não foi possível calcular a correlação entre {num_col} e {label_col}: {e}")
+
+# **Observações:**
+# - A correlação mede a relação linear entre duas variáveis numéricas.
+# - Valores próximos de +1 indicam uma correlação positiva forte, -1 uma correlação negativa forte e 0 nenhuma correlação linear.
+# - Este método considera apenas a relação univariada.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 6.5. Teste Qui-Quadrado (para variáveis categóricas e alvo categórico)
+# MAGIC
+# MAGIC **Observação:** Este teste é apropriado quando a variável de rótulo também é categórica. Se sua variável de rótulo é binária (0/1), você pode aplicá-lo para ver a relação entre as features categóricas e o rótulo.
+
+# COMMAND ----------
+
+from pyspark.ml.stat import ChiSquareTest
+from pyspark.ml.feature import OneHotEncoder
+
+if categorical_cols:
+    print("\nTeste Qui-Quadrado para Variáveis Categóricas:")
+    for cat_col in categorical_cols:
+        try:
+            # Indexar a coluna categórica
+            indexer = StringIndexer(inputCol=cat_col, outputCol=cat_col + "_index_chi", handleInvalid="keep").fit(data)
+            indexed_data = indexer.transform(data)
+
+            # Converter a coluna indexada para um vetor one-hot encoded
+            encoder = OneHotEncoder(inputCols=[cat_col + "_index_chi"], outputCols=[cat_col + "_encoded"]).fit(indexed_data)
+            encoded_data = encoder.transform(indexed_data)
+
+            # Executar o teste qui-quadrado
+            chi_squared_test = ChiSquareTest.test(encoded_data, cat_col + "_encoded", label_col)
+            result = chi_squared_test.head()
+            print(f"- Teste Qui-Quadrado para {cat_col}: Chi-squared = {result.statistic:.4f}, p-value = {result.pValue:.4f}")
+        except Exception as e:
+            print(f"- Não foi possível realizar o teste qui-quadrado para {cat_col}: {e}")
+else:
+    print("\nNão há colunas categóricas para realizar o teste qui-quadrado.")
+
+# **Interpretação:**
+# - Um p-value baixo (geralmente abaixo de 0.05) sugere que há uma dependência estatisticamente significativa entre a variável categórica e a variável de rótulo.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 7. Parar a SparkSession
+
+# COMMAND ----------
+
+spark.stop()
